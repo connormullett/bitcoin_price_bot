@@ -5,6 +5,7 @@ use log::{error, info};
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 mod api;
+mod redis;
 
 lazy_static! {
     static ref CHAT_ID: i64 = std::env::var("CHAT_ID")
@@ -21,6 +22,10 @@ async fn main() {
     let bot = Bot::from_env();
 
     let timer_bot = bot.clone();
+    let api_handler = api::ApiHandler::new()
+        .await
+        .expect("error occurred when creating api handler");
+
     tokio::spawn(async move {
         info!("starting timer thread");
         let sleep = tokio::time::sleep(Duration::from_secs(3600));
@@ -30,8 +35,11 @@ async fn main() {
             tokio::select! {
                 () = &mut sleep => {
                     info!("timer elapsed");
-                    let new_price = api::get_price_raw().await.expect("failed to get price");
-                    match api::get_price().await {
+                    let Ok(new_price) = api_handler.get_price_raw().await else {
+                        error!("failed to get new price");
+                        continue;
+                    };
+                    match api_handler.get_price().await {
                         Ok(price) => {
                             let percent = (new_price.rate / price.rate) * 100.0;
                             let delta = if new_price.rate > price.rate { "up" } else { "down"};
@@ -46,7 +54,9 @@ async fn main() {
                             error!("error occurred while getting price: {e}");
                         }
                     };
-                    api::set_cache_price(new_price).await;
+                    if let Err(e) = api_handler.set_cache_price(new_price).await {
+                        error!("error occurred while setting price {e}");
+                    };
                     sleep.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(3600));
                 },
             }
@@ -64,28 +74,15 @@ async fn main() {
 enum Command {
     #[command(description = "display this text.")]
     Help,
-    #[command(description = "check the current Bitcoin price")]
-    Price,
 }
 
 async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
     match cmd {
         Command::Help => {
+            info!("got help request from chat with id {}", msg.chat.id);
             bot.send_message(msg.chat.id, Command::descriptions().to_string())
                 .await?
         }
-        Command::Price => {
-            let message = match api::get_price().await {
-                Ok(price) => format!("${}", price.rate.round() as i32),
-                Err(e) => {
-                    error!("error occurred while getting price: {e}");
-                    "something went wrong while getting the price of bitcoin D:".into()
-                }
-            };
-
-            bot.send_message(msg.chat.id, message).await?
-        }
     };
-
     Ok(())
 }

@@ -1,15 +1,8 @@
-use lazy_static::lazy_static;
 use log::info;
-use redis::Commands;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-lazy_static! {
-    static ref CLIENT: reqwest::Client = reqwest::Client::new();
-    // TODO: Change this to a custom client
-    static ref REDIS: redis::Client =
-        redis::Client::open("redis://127.0.0.1/").expect("failed to connect to redis");
-}
+use crate::redis::RedisClient;
 
 #[derive(Error, Debug)]
 pub enum ApiError {
@@ -19,6 +12,8 @@ pub enum ApiError {
     Request(#[from] reqwest::Error),
     #[error(transparent)]
     Serialize(#[from] serde_json::Error),
+    #[error("an error occurred, {0}")]
+    Generic(String),
 }
 
 #[derive(Deserialize)]
@@ -35,58 +30,70 @@ pub struct ExchangeRate {
     pub rate: f64,
 }
 
-pub async fn get_price() -> Result<ExchangeRate, ApiError> {
-    info!("getting redis connection");
-    let mut connection = REDIS.get_connection()?;
-    let maybe_value = connection.get::<&str, String>("bitcoin_exchange_prices");
+pub struct ApiHandler {
+    http_client: reqwest::Client,
+    redis_client: RedisClient,
+}
 
-    let value = match maybe_value {
-        Ok(v) => Some(v),
-        Err(e) if e.kind() == redis::ErrorKind::TypeError => None,
-        Err(e) => return Err(ApiError::Cache(e)),
-    };
+const REDIS_KEY: &'static str = "bitcoin_exchange_price";
+const TWO_HOURS: usize = 3600 * 2;
 
-    if let Some(v) = value {
-        info!("found key in cache");
-        let cache_entry: ExchangeRate = serde_json::from_str(&v)?;
-        return Ok(cache_entry);
+impl ApiHandler {
+    pub async fn new() -> Result<Self, ApiError> {
+        let http_client = reqwest::Client::new();
+        let connection_string = std::env::var("REDIS_HOST").expect("REDIS_HOST was not set");
+        let redis_client = RedisClient::new(connection_string).await?;
+        Ok(Self {
+            http_client,
+            redis_client,
+        })
     }
 
-    let exchange_rate = get_price_raw().await?;
+    pub async fn get_price(&self) -> Result<ExchangeRate, ApiError> {
+        let value = self.redis_client.get(REDIS_KEY).await?;
 
-    let new_value = serde_json::to_string(&exchange_rate)?;
+        if let Some(v) = value {
+            info!("found key in cache");
+            let cache_entry: ExchangeRate = serde_json::from_str(&v)?;
+            return Ok(cache_entry);
+        }
 
-    info!("setting key in cache");
-    connection.set_ex("bitcoin_exchange_prices", new_value, 3_600 * 2)?;
+        let exchange_rate = self.get_price_raw().await?;
 
-    Ok(exchange_rate)
-}
+        let new_value = serde_json::to_string(&exchange_rate)?;
 
-pub async fn get_price_raw() -> Result<ExchangeRate, ApiError> {
-    info!("sending request to coin api");
-    let api_key = std::env::var("COIN_API_KEY").expect("api key is not set");
-    let res = CLIENT
-        .get("https://rest.coinapi.io/v1/exchangerate/BTC/USD")
-        .header("X-CoinAPI-Key", api_key)
-        .send()
-        .await?
-        .error_for_status()?;
+        info!("setting key in cache");
+        self.redis_client
+            .set("bitcoin_exchange_prices", &new_value, 3_600 * 2)
+            .await?;
 
-    let rate_response = res.json::<ExchangeRateData>().await?;
-    let exchange_rate = ExchangeRate {
-        time: rate_response.time,
-        rate: rate_response.rate,
-    };
+        Ok(exchange_rate)
+    }
 
-    Ok(exchange_rate)
-}
+    pub async fn get_price_raw(&self) -> Result<ExchangeRate, ApiError> {
+        info!("sending request to coin api");
+        let api_key = std::env::var("COIN_API_KEY").expect("api key is not set");
+        let res = self
+            .http_client
+            .get("https://rest.coinapi.io/v1/exchangerate/BTC/USD")
+            .header("X-CoinAPI-Key", api_key)
+            .send()
+            .await?
+            .error_for_status()?;
 
-pub async fn set_cache_price(new_price: ExchangeRate) -> () {
-    let mut connection = REDIS
-        .get_connection()
-        .expect("failed to get redis connection");
-    let value = serde_json::to_string(&new_price).expect("failed to serialize data");
-    connection
-        .set_ex::<String, String, ()>("bitcoin_exchange_prices".into(), value, 3600 * 2)
-        .expect("failed to set data in redis");
+        let rate_response = res.json::<ExchangeRateData>().await?;
+        let exchange_rate = ExchangeRate {
+            time: rate_response.time,
+            rate: rate_response.rate,
+        };
+
+        Ok(exchange_rate)
+    }
+
+    pub async fn set_cache_price(&self, new_price: ExchangeRate) -> Result<(), ApiError> {
+        let value = serde_json::to_string(&new_price).expect("failed to serialize data");
+
+        self.redis_client.set(REDIS_KEY, &value, TWO_HOURS).await?;
+        Ok(())
+    }
 }

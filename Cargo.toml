@@ -9,10 +9,14 @@ edition = "2021"
 teloxide = { version = "0.12", features = ["macros"] }
 log = "0.4"
 pretty_env_logger = "0.4"
-tokio = { version =  "1.8", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.8", features = ["rt-multi-thread", "macros", "time"] }
 reqwest = "0.11.22"
 lazy_static = "1.4.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-redis = "0.23.3"
+redis = { version = "0.23.3", features = [
+    "tokio-comp",
+    "aio",
+    "connection-manager",
+] }
 thiserror = "1.0.50"
