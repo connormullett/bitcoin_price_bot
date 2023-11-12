@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::{fmt::Display, time::Duration};
 
 use api::ApiHandler;
 use chrono::{Timelike, Utc};
 use lazy_static::lazy_static;
-use log::{error, info, LevelFilter};
+use log::{debug, error, info, LevelFilter};
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 mod api;
@@ -31,9 +31,12 @@ fn parse_filter(log_level: &str) -> LevelFilter {
 #[tokio::main]
 async fn main() {
     let log_level = std::env::var("LOG_LEVEL").expect("RUST_LOG not set");
-    pretty_env_logger::formatted_builder()
+    let logger = env_logger::builder()
         .filter_level(parse_filter(&log_level))
-        .init();
+        .build();
+
+    log::set_max_level(log::LevelFilter::Debug);
+    log::set_boxed_logger(Box::new(logger)).expect("failed to create boxed logger");
 
     info!("Starting command bot...");
 
@@ -52,7 +55,7 @@ async fn main() {
         loop {
             tokio::select! {
                 () = &mut sleep => {
-                    info!("timer elapsed");
+                    debug!("timer elapsed");
                     let Ok(new_price) = api_handler.get_price_raw().await else {
                         error!("failed to get new price");
                         continue;
@@ -83,6 +86,7 @@ async fn main() {
         }
     });
 
+    info!("bot started, ready to accept commands");
     Command::repl(bot, answer).await;
 }
 
@@ -98,9 +102,22 @@ enum Command {
     Price,
 }
 
+impl Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::Health => write!(f, "Health"),
+            Command::Price => write!(f, "Price"),
+        }
+    }
+}
+
 async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
+    info!("Request :: {}", cmd);
     match cmd {
-        Command::Health => bot.send_message(msg.chat.id, "Status: OK").await?,
+        Command::Health => {
+            debug!("got health request from {}", msg.chat.id);
+            bot.send_message(msg.chat.id, "Status: OK").await?
+        }
         Command::Price => {
             // I hate expect() but this error type is a pain to deal with
             let api_handler = ApiHandler::new()
@@ -112,7 +129,7 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
                 .await
                 .expect("failed to get price in `answer`");
 
-            bot.send_message(msg.chat.id, format!("${}", price.rate))
+            bot.send_message(msg.chat.id, format!("${}", price.rate.round() as i64))
                 .await?
         }
     };

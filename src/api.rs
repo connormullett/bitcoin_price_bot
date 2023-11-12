@@ -1,4 +1,4 @@
-use log::info;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -53,25 +53,26 @@ impl ApiHandler {
         let value = self.redis_client.get(REDIS_KEY).await?;
 
         if let Some(v) = value {
-            info!("found key in cache");
+            debug!("found key in cache");
             let cache_entry: ExchangeRate = serde_json::from_str(&v)?;
             return Ok(cache_entry);
         }
 
+        debug!("getting price from CoinAPI");
         let exchange_rate = self.get_price_raw().await?;
 
         let new_value = serde_json::to_string(&exchange_rate)?;
 
-        info!("setting key in cache");
+        debug!("setting key in cache");
         self.redis_client
-            .set("bitcoin_exchange_prices", &new_value, 3_600 * 2)
+            .set(REDIS_KEY, &new_value, 3_600 * 2)
             .await?;
 
         Ok(exchange_rate)
     }
 
     pub async fn get_price_raw(&self) -> Result<ExchangeRate, ApiError> {
-        info!("sending request to coin api");
+        debug!("sending request to coin api");
         let api_key = std::env::var("COIN_API_KEY").expect("api key is not set");
         let res = self
             .http_client
