@@ -30,11 +30,10 @@ fn parse_filter(log_level: &str) -> LevelFilter {
 
 #[tokio::main]
 async fn main() {
-    let log_level = std::env::var("RUST_LOG").expect("RUST_LOG not set");
+    let log_level = std::env::var("LOG_LEVEL").expect("RUST_LOG not set");
     pretty_env_logger::formatted_builder()
         .filter_level(parse_filter(&log_level))
         .init();
-    log::set_max_level(log::LevelFilter::Debug);
 
     info!("Starting command bot...");
 
