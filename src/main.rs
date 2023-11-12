@@ -1,22 +1,41 @@
 use std::time::Duration;
 
+use api::ApiHandler;
+use chrono::{Timelike, Utc};
 use lazy_static::lazy_static;
-use log::{error, info};
+use log::{error, info, LevelFilter};
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 mod api;
 mod redis;
 
 lazy_static! {
-    static ref CHAT_ID: i64 = std::env::var("CHAT_ID")
+    static ref CHAT_IDS: Vec<i64> = std::env::var("CHAT_ID")
         .expect("CHAT_ID is not set")
-        .parse()
-        .expect("CHAT_ID was not an int");
+        .split(',')
+        .map(|i| i.parse().expect("chat id wasn't an integer"))
+        .collect();
+}
+
+fn parse_filter(log_level: &str) -> LevelFilter {
+    match log_level {
+        "trace" => LevelFilter::Trace,
+        "debug" => LevelFilter::Debug,
+        "info" => LevelFilter::Info,
+        "warn" => LevelFilter::Warn,
+        "error" => LevelFilter::Error,
+        _ => panic!("invalid log level"),
+    }
 }
 
 #[tokio::main]
 async fn main() {
-    pretty_env_logger::init();
+    let log_level = std::env::var("RUST_LOG").expect("RUST_LOG not set");
+    pretty_env_logger::formatted_builder()
+        .filter_level(parse_filter(&log_level))
+        .init();
+    log::set_max_level(log::LevelFilter::Debug);
+
     info!("Starting command bot...");
 
     let bot = Bot::from_env();
@@ -43,11 +62,13 @@ async fn main() {
                         Ok(price) => {
                             let percent = (new_price.rate / price.rate) * 100.0;
                             let delta = if new_price.rate > price.rate { "up" } else { "down"};
-                            if percent.abs() > 3.0 {
+                            if percent.abs() > 3.0 || Utc::now().hour() % 11 == 0 {
                                 let message = format!("BTC now at ${}, {}% {}", new_price.rate.round() as i32, percent, delta);
-                                if let Err(e) = timer_bot.send_message(ChatId(*CHAT_ID), message).await {
-                                    error!("failed to send message to telegram: {e}");
-                                };
+                                for chat_id in CHAT_IDS.iter() {
+                                    if let Err(e) = timer_bot.send_message(ChatId(*chat_id), message.clone()).await {
+                                        error!("failed to send message to telegram: {e}");
+                                    };
+                                }
                             }
                         },
                         Err(e) => {
@@ -74,11 +95,27 @@ async fn main() {
 enum Command {
     #[command(description = "Check status of bot")]
     Health,
+    #[command(description = "Check current price in USD")]
+    Price,
 }
 
 async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
     match cmd {
         Command::Health => bot.send_message(msg.chat.id, "Status: OK").await?,
+        Command::Price => {
+            // I hate expect() but this error type is a pain to deal with
+            let api_handler = ApiHandler::new()
+                .await
+                .expect("failed to create api handler");
+
+            let price = api_handler
+                .get_price()
+                .await
+                .expect("failed to get price in `answer`");
+
+            bot.send_message(msg.chat.id, format!("${}", price.rate))
+                .await?
+        }
     };
     Ok(())
 }

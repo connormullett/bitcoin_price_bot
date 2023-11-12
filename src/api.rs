@@ -35,7 +35,7 @@ pub struct ApiHandler {
     redis_client: RedisClient,
 }
 
-const REDIS_KEY: &'static str = "bitcoin_exchange_price";
+const REDIS_KEY: &str = "bitcoin_exchange_price";
 const TWO_HOURS: usize = 3600 * 2;
 
 impl ApiHandler {
