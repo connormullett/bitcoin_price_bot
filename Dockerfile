@@ -5,6 +5,6 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev
 RUN cargo install --path .
 
 FROM debian:bullseye-slim
-RUN apt-get update && apt-get install -y pkg-config
+RUN apt-get update && apt-get install -y openssl ca-certificates pkg-config && update-ca-certificates
 COPY --from=builder /usr/local/cargo/bin/bitcoin-bot /usr/local/bin/bitcoin-bot
 CMD ["bitcoin-bot"]

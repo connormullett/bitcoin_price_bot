@@ -72,17 +72,13 @@ async fn main() {
     description = "These commands are supported:"
 )]
 enum Command {
-    #[command(description = "display this text.")]
-    Help,
+    #[command(description = "Check status of bot")]
+    Health,
 }
 
 async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
     match cmd {
-        Command::Help => {
-            info!("got help request from chat with id {}", msg.chat.id);
-            bot.send_message(msg.chat.id, Command::descriptions().to_string())
-                .await?
-        }
+        Command::Health => bot.send_message(msg.chat.id, "Status: OK").await?,
     };
     Ok(())
 }
