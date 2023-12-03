@@ -29,13 +29,14 @@ fn parse_filter(log_level: &str) -> LevelFilter {
 }
 
 fn format_message(new_price: f64, old_price: f64) -> String {
-    let percent = 100.0 - ((new_price / old_price) * 100.0);
+    let percent = ((new_price - old_price) / old_price) * 100.0;
     let delta = if new_price > old_price { "up" } else { "down" };
     format!(
-        "BTC now at ${}, {}% {}",
+        "Bitcoin is now at ${}, {}% {} from {}",
         new_price.round() as i32,
-        percent,
-        delta
+        percent.round() as u32,
+        delta,
+        old_price.round() as i32
     )
 }
 
@@ -73,7 +74,7 @@ async fn main() {
                     };
                     match api_handler.get_price().await {
                         Ok(price) => {
-                            let percent = 100.0 - ((new_price.rate / price.rate) * 100.0);
+                            let percent = ((new_price.rate - price.rate) / price.rate) * 100.0;
                             if percent.abs() > 3.0 || Utc::now().hour() % 11 == 0 {
                                 for chat_id in CHAT_IDS.iter() {
                                     let message = format_message(new_price.rate, price.rate);
