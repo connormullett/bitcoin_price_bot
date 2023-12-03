@@ -28,6 +28,17 @@ fn parse_filter(log_level: &str) -> LevelFilter {
     }
 }
 
+fn format_message(new_price: f64, old_price: f64) -> String {
+    let percent = 100.0 - ((new_price / old_price) * 100.0);
+    let delta = if new_price > old_price { "up" } else { "down" };
+    format!(
+        "BTC now at ${}, {}% {}",
+        new_price.round() as i32,
+        percent,
+        delta
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let log_level = std::env::var("LOG_LEVEL").expect("RUST_LOG not set");
@@ -62,11 +73,10 @@ async fn main() {
                     };
                     match api_handler.get_price().await {
                         Ok(price) => {
-                            let percent = (new_price.rate / price.rate) * 100.0;
-                            let delta = if new_price.rate > price.rate { "up" } else { "down"};
+                            let percent = 100.0 - ((new_price.rate / price.rate) * 100.0);
                             if percent.abs() > 3.0 || Utc::now().hour() % 11 == 0 {
-                                let message = format!("BTC now at ${}, {}% {}", new_price.rate.round() as i32, percent, delta);
                                 for chat_id in CHAT_IDS.iter() {
+                                    let message = format_message(new_price.rate, price.rate);
                                     if let Err(e) = timer_bot.send_message(ChatId(*chat_id), message.clone()).await {
                                         error!("failed to send message to telegram: {e}");
                                     };
